@@ -202,20 +202,25 @@ void ParticleFilter::resample() {
     // std::cout << "first_index=" << index << std::endl;
     float beta = 0;
     // find max of w
-    mw = 0;
+    float mw = 0.0;
     for (int i = 0; i < num_particles; i++) {
         if (particles[i].weight > mw) {
             mw = particles[i].weight;
         }
     }
+    // std::cout << "mw=" << mw << std::endl;
 
     for (int i = 0; i < num_particles; i++) {
         beta += 2 * mw * uniform_float(generator);
-        while (beta > particles[i].weight) {
-            beta -= particles[i].weight;
+        // std::cout << "beta=" << beta << std::endl;
+        while (beta > particles[index].weight) {
+
+            // std::cout << "weight=" << particles[index].weight << std::endl;
+            beta -= particles[index].weight;
             index = (index + 1) % num_particles;
         }
-        p_temp.push_back(particles[index])
+        p_temp.push_back(particles[index]);
+        // std::cout << "p_temp index=" << index << std::endl;
     }
 
     for (int i = 0; i < num_particles; i++) {
