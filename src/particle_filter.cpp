@@ -123,22 +123,28 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], c
     std::vector<LandmarkObs> predicted;
     for (int i = 0; i < num_particles; i++) {
         predicted.clear();
+
+        // get the particle current position and theta
         double x1 = particles[i].x;
         double y1 = particles[i].y;
         double theta = particles[i].theta;
         
-        //std::cout << "Particle Data at i=" << i << ": x,y,theta" << particles[i].x << " " << particles[i].y << " " << particles[i].theta << std::endl;
 
+        // observations is vector, each landmark has an observations.
         for (int j = 0; j < observations.size();j++) {
-            //std::cout << "observation " << j << " x,y: " << observations[j].x << " " << observations[j].y << endl;
-            double x2 = x1 + observations[j].x*cos(-theta) + observations[j].y*sin(-theta); //convert observed (Local) coord to Global coord
-            double y2 = y1 + observations[j].x*(-sin(-theta)) + observations[j].y*(cos(-theta)); //convert observed (Local) coord to Global coord
+            // 坐标系变换
+            double x2 = x1 + observations[j].x * cos(theta) + observations[j].y * sin(-theta); //convert observed (Local) coord to Global coord
+            double y2 = y1 + observations[j].x * sin(theta) + observations[j].y * cos(theta); //convert observed (Local) coord to Global coord
+
+
+            // 变换前后的距离超过sensor_range（传感器范围），说明粒子位置与车辆位置差距过大，直接跳过
             if (dist(x1, y1, x2, y2) <= sensor_range) {
                 //create a prediction add to predicted list
                 LandmarkObs pred;
-                //std::cout << "x2,y2 at i=" << i << ": " << x2 << " " << y2 << std::endl;
                 // Find nearest neighbour from map - using naive search, quite costly O(n)?, future considerations include quadtree search
                 double lastmin = 1000.0;
+
+                // 从地图中找出看距离变换后最近的坐标点，并与地图标定点计算距离差值
                 //std::cout << "landmarklistsize: " << map_landmarks.landmark_list.size() << endl;
                 for (int k = 0; k < map_landmarks.landmark_list.size();k++) {
                     double min = dist(map_landmarks.landmark_list[k].x_f, map_landmarks.landmark_list[k].y_f, x2, y2); // The distance to nearest map landmark  
@@ -147,29 +153,22 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], c
                         pred.x = x2 - map_landmarks.landmark_list[k].x_f; //doing the subtraction here for efficiency later in the Gaussian
                         pred.y = y2 - map_landmarks.landmark_list[k].y_f; //doing the subtraction here for efficiency later in the Gaussian
                         pred.id = map_landmarks.landmark_list[k].id_i;
-                    } //end if
-                } //end for
+                    }
+                }
                 predicted.push_back(pred);
-                //std::cout << "pred at i=" << i << ": x,y,id: " << pred.x <<" "<< pred.y << " "<< pred.id << std::endl;
             }
         }
-        // Now have a list of identified observations in sensor range called 'predicted', with pred.x and pred.y the difference between observed x and real mapx
-        // Calculate Multivariate Gaussian for each observation, and multiply all observations to get final weight: 
-
         //Multivariate Gaussian, simplify calc by collapsing variables:
         double sigxx = std::pow(std_landmark[0], 2);
         double sigyy = std::pow(std_landmark[1], 2);
         double coeff = 1.0 / (2.0 * M_PI*std_landmark[0] * std_landmark[1]); //1.7683
-        
+
         double weight = 1.0; // initialize weight
-        //std::cout << "predicted size at i=" << i << " " << predicted.size() << std::endl;
         for (int l = 0; l < predicted.size(); l++) {
             double xdiffsq = std::pow(predicted[l].x, 2);
             double ydiffsq = std::pow(predicted[l].y, 2);
-            //std::cout << "xdiffsq&ydiffsq&coeff at i=" << i << " and l=" << l << ": " << xdiffsq << " " << ydiffsq << " " << coeff << std::endl;
-            weight *= coeff*exp(-0.5*(xdiffsq / sigxx + ydiffsq / sigyy));
+            weight *= coeff * exp(-0.5 * (xdiffsq / sigxx + ydiffsq / sigyy));
         }
-        //std::cout << "calced weight at i=" << i << " " << weight << std::endl;
         // Done calculating combined weight of all observations, assign to particle:
         particles[i].weight = weight;
     }
@@ -191,31 +190,38 @@ void ParticleFilter::resample() {
     // TODO: Resample particles with replacement with probability proportional to their weight. 
     // NOTE: You may find std::discrete_distribution helpful here.
     //   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
-    
-    std::default_random_engine generator;
-    
     // assemble a list of all weights
-    std::vector<double> weights;
-    for (int i = 0; i < num_particles; i++) {
-        weights.push_back(particles[i].weight);
-    }
 
     // create temporary particle list
+    static std::uniform_int_distribution<unsigned> uniform_int(0, num_particles);
+    static std::uniform_real_distribution<> uniform_float(0.0, 1.0);
     std::vector<Particle> p_temp;
-
-    // create discrete_distribution generator 
-    std::discrete_distribution<> distribution (weights.begin(), weights.end());
     
-    // Resample the particles using their weights. The discrete_dist generator returns the indices from the weights list.
+    // find the first index
+    int index = uniform_int(generator);
+    // std::cout << "first_index=" << index << std::endl;
+    float beta = 0;
+    // find max of w
+    mw = 0;
     for (int i = 0; i < num_particles; i++) {
-        p_temp.push_back(particles[distribution(generator)]);
+        if (particles[i].weight > mw) {
+            mw = particles[i].weight;
+        }
     }
 
-    // Reassign all the particles to the temp particles, which should be the higher prob ones
+    for (int i = 0; i < num_particles; i++) {
+        beta += 2 * mw * uniform_float(generator);
+        while (beta > particles[i].weight) {
+            beta -= particles[i].weight;
+            index = (index + 1) % num_particles;
+        }
+        p_temp.push_back(particles[index])
+    }
+
     for (int i = 0; i < num_particles; i++) {
         particles[i] = p_temp[i];
-        //std::cout << "Weight i="<<i<<" " << particles[i].weight << std::endl;
     }
+
 }
 
 Particle ParticleFilter::SetAssociations(Particle& particle, const std::vector<int>& associations, 
